@@ -1,0 +1,15 @@
+[package]
+authors = [
+    "Rian Goossens <riangoossens@gmail.com>",
+]
+name = "cubecl-sort"
+description = "CubeCL Sorting Library."
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+version.workspace = true
+
+[dependencies]
+bytemuck = { workspace = true }
+cubecl = { path = "../cubecl" }
+half = { workspace = true, features = ["bytemuck"] }
