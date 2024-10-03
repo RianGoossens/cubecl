@@ -1,8 +1,8 @@
 use super::{CubePrimitive, Numeric, Vectorized};
 use crate::{
-    ir::{ConstantScalarValue, Elem, FloatKind, Item, Operator, Variable, Vectorization},
-    prelude::{index_assign, init_expand, CubeContext, CubeIndex, KernelBuilder, KernelLauncher},
-    KernelSettings, Runtime,
+    ir::{ConstantScalarValue, Elem, FloatKind, Item, Operator, Variable},
+    prelude::{assign, init_expand, CubeContext, CubeIndex, KernelBuilder, KernelLauncher},
+    Runtime,
 };
 use alloc::rc::Rc;
 use half::{bf16, f16};
@@ -29,7 +29,9 @@ pub trait CubeType {
     }
 }
 
+/// Trait useful for cube types that are also used with comptime.
 pub trait IntoRuntime: CubeType + Sized {
+    /// Make sure a type is actually expanded into its runtime [expand type](CubeType::ExpandType).
     fn runtime(self) -> Self {
         self
     }
@@ -53,17 +55,27 @@ pub trait Init: Sized {
 /// should expand the argument as an input while the mutable reference should expand the argument
 /// as an output.
 pub trait LaunchArgExpand: CubeType {
+    /// Compilation argument.
+    type CompilationArg: Clone
+        + PartialEq
+        + Eq
+        + core::hash::Hash
+        + core::fmt::Debug
+        + Send
+        + Sync
+        + 'static;
+
     /// Register an input variable during compilation that fill the [KernelBuilder].
     fn expand(
+        arg: &Self::CompilationArg,
         builder: &mut KernelBuilder,
-        vectorization: Vectorization,
     ) -> <Self as CubeType>::ExpandType;
     /// Register an output variable during compilation that fill the [KernelBuilder].
     fn expand_output(
+        arg: &Self::CompilationArg,
         builder: &mut KernelBuilder,
-        vectorization: Vectorization,
     ) -> <Self as CubeType>::ExpandType {
-        Self::expand(builder, vectorization)
+        Self::expand(arg, builder)
     }
 }
 
@@ -71,10 +83,17 @@ pub trait LaunchArgExpand: CubeType {
 pub trait LaunchArg: LaunchArgExpand + Send + Sync + 'static {
     /// The runtime argument for the kernel.
     type RuntimeArg<'a, R: Runtime>: ArgSettings<R>;
+
+    fn compilation_arg<R: Runtime>(runtime_arg: &Self::RuntimeArg<'_, R>) -> Self::CompilationArg;
 }
 
 impl LaunchArg for () {
     type RuntimeArg<'a, R: Runtime> = ();
+
+    fn compilation_arg<'a, R: Runtime>(
+        _runtime_arg: &'a Self::RuntimeArg<'a, R>,
+    ) -> Self::CompilationArg {
+    }
 }
 
 impl<R: Runtime> ArgSettings<R> for () {
@@ -84,9 +103,11 @@ impl<R: Runtime> ArgSettings<R> for () {
 }
 
 impl LaunchArgExpand for () {
+    type CompilationArg = ();
+
     fn expand(
+        _: &Self::CompilationArg,
         _builder: &mut KernelBuilder,
-        _vectorization: Vectorization,
     ) -> <Self as CubeType>::ExpandType {
     }
 }
@@ -105,14 +126,6 @@ impl Init for () {
 pub trait ArgSettings<R: Runtime>: Send + Sync {
     /// Register the information to the [KernelLauncher].
     fn register(&self, launcher: &mut KernelLauncher<R>);
-    /// Configure an input argument at the given position.
-    fn configure_input(&self, _position: usize, settings: KernelSettings) -> KernelSettings {
-        settings
-    }
-    /// Configure an output argument at the given position.
-    fn configure_output(&self, _position: usize, settings: KernelSettings) -> KernelSettings {
-        settings
-    }
 }
 
 /// Reference to a JIT variable
@@ -245,7 +258,7 @@ impl<T: CubeType> Vectorized for ExpandElementTyped<T> {
 }
 
 impl<T: CubeType> ExpandElementTyped<T> {
-    // Expanded version of rank.
+    // Expanded version of vectorization factor.
     pub fn __expand_vectorization_factor_method(self, _context: &mut CubeContext) -> u32 {
         self.expand
             .item()
@@ -318,6 +331,11 @@ impl ExpandElement {
             ExpandElement::Plain(_) => false,
         }
     }
+
+    /// Explicitly consume the element, freeing it for reuse if no other copies exist.
+    pub fn consume(self) -> Variable {
+        *self
+    }
 }
 
 impl core::ops::Deref for ExpandElement {
@@ -358,6 +376,7 @@ pub(crate) fn init_expand_element<E: Into<ExpandElement>>(
         Variable::LocalScalar { .. } => init(elem),
         Variable::ConstantScalar { .. } => init(elem),
         Variable::Local { .. } => init(elem),
+        Variable::LocalBinding { .. } => init(elem),
         // Constant should be initialized since the new variable can be mutated afterward.
         // And it is assumed those values are cloned.
         Variable::Rank
@@ -387,6 +406,7 @@ pub(crate) fn init_expand_element<E: Into<ExpandElement>>(
         | Variable::GlobalInputArray { .. }
         | Variable::GlobalOutputArray { .. }
         | Variable::LocalArray { .. }
+        | Variable::ConstantArray { .. }
         | Variable::Slice { .. }
         | Variable::Matrix { .. } => elem,
     }
@@ -434,25 +454,14 @@ pub(crate) fn __expand_vectorized<C: Numeric + CubeIndex<u32>, Out: Numeric>(
     vectorization: u32,
     elem: Elem,
 ) -> ExpandElementTyped<Out> {
-    let new_var = context.create_local(Item::vectorized(elem, NonZero::new(vectorization as u8)));
+    let new_var =
+        context.create_local_binding(Item::vectorized(elem, NonZero::new(vectorization as u8)));
     let val = Out::from(val).unwrap();
     let val: ExpandElementTyped<Out> = val.into();
 
-    // Allow setting explicit vectorization of 1 without trying to index assign it
-    if vectorization == 1 {
-        return val;
-    }
-
-    for (i, element) in vec![val; vectorization as usize].iter().enumerate() {
-        let element = elem.from_constant(*element.expand);
-
-        index_assign::expand::<C>(
-            context,
-            new_var.clone().into(),
-            ExpandElementTyped::from_lit(i),
-            ExpandElement::Plain(element).into(),
-        );
-    }
+    // Explanation for removing all this code: Assignments are already being unrolled and broadcast
+    // in the backend, so this was just duplicating code and it interfered with the SSA allocator
+    assign::expand(context, val, new_var.clone().into());
 
     new_var.into()
 }

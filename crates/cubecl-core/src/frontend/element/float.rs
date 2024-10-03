@@ -3,7 +3,7 @@ use std::num::NonZero;
 use half::{bf16, f16};
 
 use crate::{
-    ir::{Elem, FloatKind, Item, Vectorization},
+    ir::{Elem, FloatKind, Item},
     prelude::*,
     unexpanded,
 };
@@ -28,6 +28,7 @@ pub trait Float:
     + Recip
     + Magnitude
     + Normalize
+    + Dot
     + Into<Self::ExpandType>
     + core::ops::Add<Output = Self>
     + core::ops::Sub<Output = Self>
@@ -154,7 +155,7 @@ macro_rules! impl_float {
                 vectorization: u32,
             ) -> <Self as CubeType>::ExpandType {
                 context
-                    .create_local(Item::vectorized(
+                    .create_local_variable(Item::vectorized(
                         Self::as_elem(),
                         NonZero::new(vectorization as u8),
                     ))
@@ -163,11 +164,12 @@ macro_rules! impl_float {
         }
 
         impl LaunchArgExpand for $primitive {
+            type CompilationArg = ();
+
             fn expand(
+                _: &Self::CompilationArg,
                 builder: &mut KernelBuilder,
-                vectorization: Vectorization,
             ) -> ExpandElementTyped<Self> {
-                assert_eq!(vectorization, None, "Attempted to vectorize a scalar");
                 builder.scalar($primitive::as_elem()).into()
             }
         }

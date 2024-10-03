@@ -19,17 +19,18 @@ use serde::{Deserialize, Serialize};
 pub struct Scope {
     pub depth: u8,
     pub operations: Vec<Operation>,
-    locals: Vec<Variable>,
+    pub locals: Vec<Variable>,
     matrices: Vec<Variable>,
     slices: Vec<Variable>,
     shared_memories: Vec<Variable>,
+    pub const_arrays: Vec<(Variable, Vec<Variable>)>,
     local_arrays: Vec<Variable>,
     reads_global: Vec<(Variable, ReadingStrategy, Variable, Variable)>,
     index_offset_with_output_layout_position: Vec<usize>,
     writes_global: Vec<(Variable, Variable, Variable)>,
     reads_scalar: Vec<(Variable, Variable)>,
     pub layout_ref: Option<Variable>,
-    undeclared: u16,
+    pub undeclared: u16,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Hash, Eq)]
@@ -55,6 +56,7 @@ impl Scope {
             slices: Vec::new(),
             local_arrays: Vec::new(),
             shared_memories: Vec::new(),
+            const_arrays: Vec::new(),
             reads_global: Vec::new(),
             index_offset_with_output_layout_position: Vec::new(),
             writes_global: Vec::new(),
@@ -130,7 +132,7 @@ impl Scope {
         local
     }
 
-    /// Create a new local variable, but doesn't perform the declaration.
+    /// Create a new undeclared local binding, but doesn't perform the declaration.
     ///
     /// Useful for _for loops_ and other algorithms that require the control over initialization.
     pub fn create_local_undeclared(&mut self, item: Item) -> Variable {
@@ -276,6 +278,7 @@ impl Scope {
             matrices: Vec::new(),
             slices: Vec::new(),
             shared_memories: Vec::new(),
+            const_arrays: Vec::new(),
             local_arrays: Vec::new(),
             reads_global: Vec::new(),
             index_offset_with_output_layout_position: Vec::new(),
@@ -382,7 +385,7 @@ impl Scope {
         .optimize()
     }
 
-    fn new_local_index(&self) -> u16 {
+    pub fn new_local_index(&self) -> u16 {
         self.locals.len() as u16 + self.undeclared
     }
 
@@ -392,6 +395,10 @@ impl Scope {
 
     fn new_shared_index(&self) -> u16 {
         self.shared_memories.len() as u16
+    }
+
+    fn new_const_array_index(&self) -> u16 {
+        self.const_arrays.len() as u16
     }
 
     fn new_local_array_index(&self) -> u16 {
@@ -438,6 +445,19 @@ impl Scope {
         };
         self.shared_memories.push(shared_memory);
         shared_memory
+    }
+
+    /// Create a shared variable of the given [item type](Item).
+    pub fn create_const_array<I: Into<Item>>(&mut self, item: I, data: Vec<Variable>) -> Variable {
+        let item = item.into();
+        let index = self.new_const_array_index();
+        let const_array = Variable::ConstantArray {
+            id: index,
+            item,
+            length: data.len() as u32,
+        };
+        self.const_arrays.push((const_array, data));
+        const_array
     }
 
     /// Create a local array of the given [item type](Item).

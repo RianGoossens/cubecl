@@ -1,4 +1,4 @@
-use super::{Body, Item};
+use super::{Body, Item, Variable};
 use cubecl_core::{ir::CubeDim, CompilerRepresentation};
 use std::{collections::HashSet, fmt::Display, io::Write, process::Command};
 
@@ -13,6 +13,14 @@ pub struct SharedMemory {
     pub index: u16,
     pub item: Item,
     pub size: u32,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ConstArray {
+    pub index: u16,
+    pub item: Item,
+    pub size: u32,
+    pub values: Vec<Variable>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -91,48 +99,51 @@ impl Display for ComputeKernel {
             let size = item.vectorization;
             let alignment = elem.size() * size;
             if size > 1 {
-                f.write_fmt(format_args!(
+                write!(
+                    f,
                     "
 struct __align__({alignment}) {item} {{"
-                ))?;
+                )?;
 
                 for i in 0..size {
-                    f.write_fmt(format_args!(
+                    write!(
+                        f,
                         "
     {elem} i_{i};"
-                    ))?;
+                    )?;
                 }
 
                 f.write_str("\n};\n")?;
             }
         }
 
-        f.write_fmt(format_args!(
+        write!(
+            f,
             "
 
 extern \"C\" __global__ void kernel(
 ",
-        ))?;
+        )?;
 
         let num_bindings = self.inputs.len() + self.outputs.len() + self.named.len();
         let mut binding_index = 0;
         for (index, binding) in self.inputs.iter().enumerate() {
             binding_index += 1;
-            f.write_fmt(format_args!("{} input_{}[]", binding.item, index))?;
+            write!(f, "{} input_{}[]", binding.item, index)?;
             if binding_index < num_bindings {
                 f.write_str(",")?;
             }
         }
         for (index, binding) in self.outputs.iter().enumerate() {
             binding_index += 1;
-            f.write_fmt(format_args!("{} output_{}[]", binding.item, index))?;
+            write!(f, "{} output_{}[]", binding.item, index)?;
             if binding_index < num_bindings {
                 f.write_str(",")?;
             }
         }
         for (name, binding) in self.named.iter() {
             binding_index += 1;
-            f.write_fmt(format_args!("{} {}[]", binding.item, name))?;
+            write!(f, "{} {}[]", binding.item, name)?;
 
             if binding_index < num_bindings {
                 f.write_str(",")?;
@@ -141,7 +152,7 @@ extern \"C\" __global__ void kernel(
 
         f.write_str("\n) {\n")?;
 
-        f.write_fmt(format_args!("{}", self.body))?;
+        write!(f, "{}", self.body)?;
         f.write_str("\n}")?;
 
         Ok(())

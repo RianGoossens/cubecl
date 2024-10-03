@@ -1,4 +1,4 @@
-use crate::ir::{Elem, Item, Visibility};
+use crate::ir::{Elem, Item, LocalAllocator, ReusingAllocator, Visibility};
 use crate::prelude::KernelDefinition;
 use crate::KernelSettings;
 use crate::{
@@ -68,6 +68,22 @@ impl KernelBuilder {
         variable
     }
 
+    /// Register an output that uses the same resource as the input as the given position.
+    pub fn inplace_output(&mut self, position: u16) -> ExpandElement {
+        let input = self
+            .inputs
+            .get_mut(position as usize)
+            .expect("Position valid");
+
+        if let InputInfo::Array { visibility, item } = input {
+            *visibility = Visibility::ReadWrite;
+            let variable = self.context.input(position, *item);
+            return variable;
+        }
+
+        panic!("No input found at position {position}");
+    }
+
     /// Register an input array and return the [element](ExpandElement) to be used for kernel expansion.
     pub fn input_array(&mut self, item: Item) -> ExpandElement {
         self.inputs.push(InputInfo::Array {
@@ -88,17 +104,21 @@ impl KernelBuilder {
         })
         .integrate(settings)
     }
-}
 
-impl Default for KernelBuilder {
-    fn default() -> Self {
+    pub fn with_local_allocator(allocator: impl LocalAllocator + 'static) -> Self {
         Self {
-            context: CubeContext::root(),
+            context: CubeContext::root(allocator),
             inputs: Vec::new(),
             outputs: Vec::new(),
             indices: HashMap::new(),
             num_input: 0,
             num_output: 0,
         }
+    }
+}
+
+impl Default for KernelBuilder {
+    fn default() -> Self {
+        Self::with_local_allocator(ReusingAllocator::default())
     }
 }

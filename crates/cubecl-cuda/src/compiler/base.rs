@@ -1,7 +1,7 @@
 use std::{collections::HashSet, num::NonZero};
 
 use cubecl_core::{
-    ir::{self as gpu, ConstantScalarValue},
+    ir::{self as gpu, ConstantScalarValue, Metadata, ReusingAllocator},
     Compiler,
 };
 use cubecl_runtime::ExecutionMode;
@@ -12,6 +12,7 @@ use super::{Instruction, VariableSettings, WarpInstruction};
 #[derive(Clone, Debug, Default)]
 pub struct CudaCompiler {
     shared_memories: Vec<super::SharedMemory>,
+    const_arrays: Vec<super::ConstArray>,
     local_arrays: Vec<super::LocalArray>,
     rank: bool,
     wrap_size_checked: bool,
@@ -48,6 +49,10 @@ impl Compiler for CudaCompiler {
     fn max_shared_memory_size() -> usize {
         49152
     }
+
+    fn local_allocator() -> impl gpu::LocalAllocator {
+        ReusingAllocator::default()
+    }
 }
 
 impl CudaCompiler {
@@ -77,6 +82,7 @@ impl CudaCompiler {
             stride: true,
             shape: true,
             shared_memories: self.shared_memories,
+            const_arrays: self.const_arrays,
             local_arrays: self.local_arrays,
             rank: self.rank,
             wrap_size_checked: self.wrap_size_checked,
@@ -98,6 +104,22 @@ impl CudaCompiler {
 
     fn compile_scope(&mut self, scope: &mut gpu::Scope) -> Vec<Instruction> {
         let mut instructions = Vec::new();
+
+        let const_arrays = scope
+            .const_arrays
+            .drain(..)
+            .map(|(var, values)| super::ConstArray {
+                index: var.index().unwrap(),
+                item: self.compile_item(var.item()),
+                size: values.len() as u32,
+                values: values
+                    .into_iter()
+                    .map(|val| self.compile_variable(val))
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        self.const_arrays.extend(const_arrays);
+
         let processing = scope.process();
 
         for var in processing.variables {
@@ -287,6 +309,23 @@ impl CudaCompiler {
                 instructions_if: self.compile_scope(&mut op.scope_if),
                 instructions_else: self.compile_scope(&mut op.scope_else),
             }),
+            gpu::Branch::Switch(mut op) => instructions.push(Instruction::Switch {
+                value: self.compile_variable(op.value),
+                instructions_default: self.compile_scope(&mut op.scope_default),
+                instructions_cases: op
+                    .cases
+                    .into_iter()
+                    .map(|(val, mut block)| {
+                        (self.compile_variable(val), self.compile_scope(&mut block))
+                    })
+                    .collect(),
+            }),
+            gpu::Branch::Select(op) => instructions.push(Instruction::Select {
+                cond: self.compile_variable(op.cond),
+                then: self.compile_variable(op.then),
+                or_else: self.compile_variable(op.or_else),
+                out: self.compile_variable(op.out),
+            }),
             gpu::Branch::Return => instructions.push(Instruction::Return),
             gpu::Branch::Break => instructions.push(Instruction::Break),
             gpu::Branch::RangeLoop(mut range_loop) => instructions.push(Instruction::RangeLoop {
@@ -369,26 +408,26 @@ impl CudaCompiler {
                 out: self.compile_variable(op.out),
             }),
             gpu::Operator::Index(op) => {
-                if let ExecutionMode::Checked = self.strategy {
-                    // Since atomics must be declared inline (for `wgpu` compatibility), we need to
-                    // disable runtime checks for them. Otherwise the variable would be declared
-                    // inside the `if` scope.
-                    if has_length(&op.lhs) && !op.lhs.item().elem.is_atomic() {
-                        self.compile_procedure(
-                            instructions,
-                            gpu::Procedure::CheckedIndex(gpu::CheckedIndex {
-                                lhs: op.lhs,
-                                rhs: op.rhs,
-                                out: op.out,
-                            }),
-                            scope,
-                        );
+                if matches!(self.strategy, ExecutionMode::Checked) && has_length(&op.lhs) {
+                    let lhs = op.lhs;
+                    let rhs = op.rhs;
+                    let array_len = scope.create_local(gpu::Item::new(gpu::Elem::UInt));
 
-                        return;
-                    }
-                };
+                    instructions.extend(self.compile_scope(scope));
 
-                instructions.push(Instruction::Index(self.compile_binary(op)));
+                    instructions.push(self.compile_metadata(Metadata::Length {
+                        var: lhs,
+                        out: array_len,
+                    }));
+                    instructions.push(Instruction::CheckedIndex {
+                        len: self.compile_variable(array_len),
+                        lhs: self.compile_variable(lhs),
+                        rhs: self.compile_variable(rhs),
+                        out: self.compile_variable(op.out),
+                    });
+                } else {
+                    instructions.push(Instruction::Index(self.compile_binary(op)));
+                }
             }
             gpu::Operator::UncheckedIndex(op) => {
                 instructions.push(Instruction::Index(self.compile_binary(op)))
@@ -557,6 +596,7 @@ impl CudaCompiler {
             gpu::Operator::Magnitude(op) => {
                 instructions.push(Instruction::Magnitude(self.compile_unary(op)))
             }
+            gpu::Operator::Dot(op) => instructions.push(Instruction::Dot(self.compile_binary(op))),
         };
     }
 
@@ -588,6 +628,11 @@ impl CudaCompiler {
                 item: self.compile_item(item),
                 depth,
             },
+            gpu::Variable::LocalBinding { id, item, depth } => super::Variable::ConstLocal {
+                id,
+                item: self.compile_item(item),
+                depth,
+            },
             gpu::Variable::Slice { id, item, depth } => super::Variable::Slice {
                 id,
                 item: self.compile_item(item),
@@ -611,6 +656,10 @@ impl CudaCompiler {
                         .push(super::SharedMemory::new(id, item, length));
                 }
                 super::Variable::SharedMemory(id, item, length)
+            }
+            gpu::Variable::ConstantArray { id, item, length } => {
+                let item = self.compile_item(item);
+                super::Variable::ConstantArray(id, item, length)
             }
             gpu::Variable::AbsolutePos => {
                 self.settings.idx_global = true;

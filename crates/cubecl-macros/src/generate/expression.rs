@@ -3,7 +3,7 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::{spanned::Spanned, Member, PathArguments};
 
 use crate::{
-    expression::{Block, Expression},
+    expression::{Block, ConstMatchArm, Expression},
     operator::Operator,
     paths::{frontend_path, frontend_type, prelude_type},
     scope::Context,
@@ -327,6 +327,34 @@ impl Expression {
                     }
                 }
             }
+            Expression::Switch {
+                value,
+                cases,
+                default,
+            } => {
+                let branch = frontend_type("branch");
+                let switch = match default.ret.is_some() {
+                    true => quote![switch_expand_expr],
+                    false => quote![switch_expand],
+                };
+                let value = value.to_tokens(context);
+                let default = default.to_tokens(context);
+                let blocks = cases
+                    .iter()
+                    .map(|(val, block)| {
+                        let block = block.to_tokens(context);
+                        quote![.case(context, #val, |context| #block)]
+                    })
+                    .collect::<Vec<_>>();
+                quote! {
+                    {
+                        let _val = #value;
+                        #branch::#switch(context, _val.into(), |context| #default)
+                            #(#blocks)*
+                            .finish(context)
+                    }
+                }
+            }
             Expression::Path { path, .. } => quote![#path],
             Expression::Range {
                 start,
@@ -426,6 +454,26 @@ impl Expression {
             }
             Expression::Verbatim { tokens, .. } => tokens.clone(),
             Expression::Block(block) => block.to_tokens(context),
+            Expression::ConstMatch { const_expr, arms } => {
+                let arms = arms.iter().map(|arm| arm.to_tokens(context));
+
+                quote! {
+                    match #const_expr {
+                        #(#arms,)*
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl ConstMatchArm {
+    pub fn to_tokens(&self, context: &mut Context) -> TokenStream {
+        let path = &self.pat;
+        let expr = self.expr.to_tokens(context);
+
+        quote! {
+            #path => #expr
         }
     }
 }

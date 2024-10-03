@@ -103,6 +103,7 @@ impl Operator {
             Operator::AtomicXor(op) => Operator::AtomicXor(op.vectorize(vectorization)),
             Operator::Magnitude(op) => Operator::Magnitude(op.vectorize(vectorization)),
             Operator::Normalize(op) => Operator::Normalize(op.vectorize(vectorization)),
+            Operator::Dot(op) => Operator::Dot(op.vectorize(vectorization)),
         }
     }
 }
@@ -215,6 +216,11 @@ impl Variable {
                 item: item.vectorize(vectorize),
                 depth: *depth,
             },
+            Variable::LocalBinding { id, item, depth } => Variable::LocalBinding {
+                id: *id,
+                item: item.vectorize(vectorize),
+                depth: *depth,
+            },
             Variable::Slice { id, item, depth } => Variable::Slice {
                 id: *id,
                 item: item.vectorize(vectorize),
@@ -238,6 +244,11 @@ impl Variable {
                 id: *id,
                 item: item.vectorize(vectorize),
                 depth: *depth,
+                length: item.vectorized_size(vectorize, *length),
+            },
+            Variable::ConstantArray { id, item, length } => Variable::ConstantArray {
+                id: *id,
+                item: item.vectorize(vectorize),
                 length: item.vectorized_size(vectorize, *length),
             },
             Variable::ConstantScalar { .. } => *self,

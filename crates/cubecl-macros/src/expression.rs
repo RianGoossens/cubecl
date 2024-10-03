@@ -91,6 +91,11 @@ pub enum Expression {
         then_block: Block,
         else_branch: Option<Box<Expression>>,
     },
+    Switch {
+        value: Box<Expression>,
+        cases: Vec<(Lit, Block)>,
+        default: Block,
+    },
     Return {
         expr: Option<Box<Expression>>,
         span: Span,
@@ -132,6 +137,16 @@ pub enum Expression {
     Keyword {
         name: syn::Ident,
     },
+    ConstMatch {
+        const_expr: syn::Expr,
+        arms: Vec<ConstMatchArm>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct ConstMatchArm {
+    pub pat: syn::Pat,
+    pub expr: Box<Expression>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -162,6 +177,7 @@ impl Expression {
             Expression::Range { start, .. } => start.ty(),
             Expression::Loop { .. } => None,
             Expression::If { then_block, .. } => then_block.ty.clone(),
+            Expression::Switch { default, .. } => default.ty.clone(),
             Expression::Return { expr, .. } => expr.as_ref().and_then(|expr| expr.ty()),
             Expression::Array { .. } => None,
             Expression::Index { .. } => None,
@@ -174,6 +190,7 @@ impl Expression {
             Expression::Closure { .. } => None,
             Expression::Keyword { .. } => None,
             Expression::CompilerIntrinsic { .. } => None,
+            Expression::ConstMatch { .. } => None,
         }
     }
 

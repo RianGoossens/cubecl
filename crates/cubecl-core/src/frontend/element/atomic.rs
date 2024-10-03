@@ -4,10 +4,7 @@ use super::{
 };
 use crate::{
     frontend::{CubeContext, CubePrimitive, CubeType, ExpandElement},
-    ir::{
-        BinaryOperator, CompareAndSwapOperator, Elem, IntKind, Item, Operator, UnaryOperator,
-        Vectorization,
-    },
+    ir::{BinaryOperator, CompareAndSwapOperator, Elem, IntKind, Item, Operator, UnaryOperator},
     prelude::KernelBuilder,
     unexpanded,
 };
@@ -102,7 +99,7 @@ where
         pointer: <Self as CubeType>::ExpandType,
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let pointer: ExpandElement = pointer.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicLoad(UnaryOperator {
             input: *pointer,
             out: *new_var,
@@ -130,7 +127,7 @@ where
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let ptr: ExpandElement = pointer.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicSwap(BinaryOperator {
             lhs: *ptr,
             rhs: *value,
@@ -148,7 +145,7 @@ where
         let pointer: ExpandElement = pointer.into();
         let cmp: ExpandElement = cmp.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicCompareAndSwap(CompareAndSwapOperator {
             out: *new_var,
             input: *pointer,
@@ -165,7 +162,7 @@ where
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let ptr: ExpandElement = pointer.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicAdd(BinaryOperator {
             lhs: *ptr,
             rhs: *value,
@@ -181,7 +178,7 @@ where
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let ptr: ExpandElement = pointer.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicSub(BinaryOperator {
             lhs: *ptr,
             rhs: *value,
@@ -197,7 +194,7 @@ where
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let ptr: ExpandElement = pointer.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicMax(BinaryOperator {
             lhs: *ptr,
             rhs: *value,
@@ -213,7 +210,7 @@ where
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let ptr: ExpandElement = pointer.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicMin(BinaryOperator {
             lhs: *ptr,
             rhs: *value,
@@ -229,7 +226,7 @@ where
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let ptr: ExpandElement = pointer.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicAnd(BinaryOperator {
             lhs: *ptr,
             rhs: *value,
@@ -245,7 +242,7 @@ where
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let ptr: ExpandElement = pointer.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicOr(BinaryOperator {
             lhs: *ptr,
             rhs: *value,
@@ -261,7 +258,7 @@ where
     ) -> <Self::Primitive as CubeType>::ExpandType {
         let ptr: ExpandElement = pointer.into();
         let value: ExpandElement = value.into();
-        let new_var = context.create_local(Item::new(Self::Primitive::as_elem()));
+        let new_var = context.create_local_binding(Item::new(Self::Primitive::as_elem()));
         context.register(Operator::AtomicXor(BinaryOperator {
             lhs: *ptr,
             rhs: *value,
@@ -306,11 +303,12 @@ macro_rules! impl_atomic_int {
         }
 
         impl LaunchArgExpand for $type {
+            type CompilationArg = ();
+
             fn expand(
+                _: &Self::CompilationArg,
                 builder: &mut KernelBuilder,
-                vectorization: Vectorization,
             ) -> ExpandElementTyped<Self> {
-                assert_eq!(vectorization, None, "Attempted to vectorize a scalar");
                 builder.scalar(Elem::AtomicInt(IntKind::$inner_type)).into()
             }
         }
@@ -357,11 +355,9 @@ impl ExpandElementBaseInit for AtomicU32 {
 }
 
 impl LaunchArgExpand for AtomicU32 {
-    fn expand(
-        builder: &mut KernelBuilder,
-        vectorization: Vectorization,
-    ) -> ExpandElementTyped<Self> {
-        assert_eq!(vectorization, None, "Attempted to vectorize a scalar");
+    type CompilationArg = ();
+
+    fn expand(_: &Self::CompilationArg, builder: &mut KernelBuilder) -> ExpandElementTyped<Self> {
         builder.scalar(Elem::AtomicUInt).into()
     }
 }

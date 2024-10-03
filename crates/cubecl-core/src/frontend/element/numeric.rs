@@ -31,7 +31,7 @@ pub trait Numeric:
     + Remainder
     + Vectorized
     + CubePrimitive
-    + LaunchArgExpand
+    + LaunchArgExpand<CompilationArg = ()>
     + ScalarArgSettings
     + ExpandElementBaseInit
     + Into<ExpandElementTyped<Self>>
@@ -82,7 +82,7 @@ pub trait Numeric:
         context: &mut CubeContext,
         vec: [u32; D],
     ) -> <Self as CubeType>::ExpandType {
-        let new_var = context.create_local(Item::vectorized(
+        let new_var = context.create_local_binding(Item::vectorized(
             Self::as_elem(),
             NonZero::new(vec.len() as u8),
         ));
@@ -124,4 +124,9 @@ impl<T: Numeric, R: Runtime> ArgSettings<R> for ScalarArg<T> {
 
 impl<T: Numeric> LaunchArg for T {
     type RuntimeArg<'a, R: Runtime> = ScalarArg<T>;
+
+    fn compilation_arg<'a, R: Runtime>(
+        _runtime_arg: &'a Self::RuntimeArg<'a, R>,
+    ) -> Self::CompilationArg {
+    }
 }
